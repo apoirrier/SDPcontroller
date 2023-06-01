@@ -1311,6 +1311,7 @@ function startServer() {
                 connection.query(
                     '(SELECT ' +
                     '    `service_gateway`.`service_id`,  ' +
+                    '    `service`.`name`,  ' +
                     '    `service_gateway`.`gateway_sdpid`,  ' +
                     '    `service_gateway`.`protocol`,  ' +
                     '    `service_gateway`.`address`,  ' +
@@ -1318,6 +1319,8 @@ function startServer() {
                     'FROM `service_gateway` ' +
                     '    JOIN `sdpid_service` ' +
                     '        ON `sdpid_service`.`service_id` = `service_gateway`.`service_id` ' +
+                    '    JOIN `service` ' +
+                    '        ON `sdpid_service`.`service_id` = `service`.`id` ' +
                     'WHERE `sdpid_service`.`sdpid` = ? )' +
                     'ORDER BY `service_id` ',
                     [memberDetails.sdpid],
@@ -1344,6 +1347,7 @@ function startServer() {
                                 currentService = thisRow.service_id;
                                 services.push({
                                     service_id: thisRow.service_id,
+                                    name: thisRow.name,
                                     gateway_sdpid: thisRow.gateway_sdpid,
                                     protocol: thisRow.protocol,
                                     address: thisRow.address,
