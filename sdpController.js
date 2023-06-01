@@ -1271,9 +1271,110 @@ function startServer() {
       
     
         function handleAccessUpdate(message) {
-          //TODO
+          if (dataTransmitTries >= config.maxDataTransmitTries) {
+                // Data transmission has failed
+                console.error("Data transmission to SDP ID " + memberDetails.sdpid +
+                  " has failed after " + (dataTransmitTries+1) + " attempts");
+                console.error("Closing connection");
+                socket.end();
+                return;
+            }
+
+            db.getConnection(function(error,connection){
+                if(error){
+                    console.error("Error connecting to database: " + error);
+
+                    // notify the requestor of our database troubles
+                    writeToSocket(socket,
+                        JSON.stringify({
+                            action: 'access_refresh_error',
+                            data: 'Database unreachable. Try again soon.'
+                        }),
+                        false
+                    );
+
+                    return;
+                }
+
+                var databaseErrorCallback = function(error) {
+                    connection.removeListener('error', databaseErrorCallback);
+                    connection.release();
+                    console.error("Error from database connection: " + error);
+                    return;
+                };
+
+                connection.on('error', databaseErrorCallback);
+
+                // Legacy Requests not supported (TODO)
+                // Groups also not supported for this POC (TODO)
+
+                connection.query(
+                    '(SELECT ' +
+                    '    `service_gateway`.`service_id`,  ' +
+                    '    `service_gateway`.`gateway_sdpid`,  ' +
+                    '    `service_gateway`.`protocol`,  ' +
+                    '    `service_gateway`.`address`,  ' +
+                    '    `service_gateway`.`port` ' +
+                    'FROM `service_gateway` ' +
+                    '    JOIN `sdpid_service` ' +
+                    '        ON `sdpid_service`.`service_id` = `service_gateway`.`service_id` ' +
+                    'WHERE `sdpid_service`.`sdpid` = ? )' +
+                    'ORDER BY `service_id` ',
+                    [memberDetails.sdpid],
+                    function (error, rows, fields) {
+                        connection.removeListener('error', databaseErrorCallback);
+                        connection.release();
+                        if(error) {
+                            console.error("Access data query returned error: " + error);
+                            writeToSocket(socket,
+                                JSON.stringify({
+                                    action: 'access_update_error',
+                                    data: 'Database error. Try again soon.'
+                                }),
+                                false
+                            );
+                            return;
+                        }
+
+                        var services = [];
+                        var currentService = 0;
+                        for(var rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+                            var thisRow = rows[rowIdx];
+                            if(thisRow.service_id != currentService) {
+                                currentService = thisRow.service_id;
+                                services.push({
+                                    service_id: thisRow.service_id,
+                                    gateway_sdpid: thisRow.gateway_sdpid,
+                                    protocol: thisRow.protocol,
+                                    address: thisRow.address,
+                                    port: thisRow.port
+                                });
+                            }
+                        }
+
+                        if(config.debug) {
+                            console.log("Services to send: \n", services, "\n");
+                        }
+
+                        dataTransmitTries++;
+                        console.log("Sending access_update message to SDP ID " +
+                            memberDetails.sdpid + ", attempt: " + dataTransmitTries);
+
+                        writeToSocket(socket,
+                            JSON.stringify({
+                                action: 'access_update',
+                                services
+                            }),
+                            false
+                        );
+
+                    } // END QUERY CALLBACK FUNCTION
+
+                );  // END QUERY DEFINITION
           
-        }
+            });  // END DATABASE CONNECTION CALLBACK
+
+        }  // END FUNCTION handleAccessUpdate
       
       
         function handleAccessAck()  {

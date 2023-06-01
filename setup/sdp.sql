@@ -468,6 +468,7 @@ CREATE TABLE IF NOT EXISTS `service_gateway` (
   `service_id` int(11) NOT NULL,
   `gateway_sdpid` int(11) NOT NULL,
   `protocol` tinytext COLLATE utf8_bin NOT NULL COMMENT 'TCP, UDP',
+  `address` varchar(1024) COLLATE utf8_bin NOT NULL COMMENT 'ip or url',
   `port` int(10) unsigned NOT NULL,
   `nat_ip` varchar(128) COLLATE utf8_bin NOT NULL DEFAULT '' COMMENT '1.1.1.1   internal IP address',
   `nat_port` int(10) unsigned NOT NULL DEFAULT '0',
