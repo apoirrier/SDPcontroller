@@ -1321,9 +1321,25 @@ function startServer() {
                     '        ON `sdpid_service`.`service_id` = `service_gateway`.`service_id` ' +
                     '    JOIN `service` ' +
                     '        ON `sdpid_service`.`service_id` = `service`.`id` ' +
-                    'WHERE `sdpid_service`.`sdpid` = ? )' +
+                    'WHERE `sdpid_service`.`sdpid` = ? AND `sdpid_service`.`user_id` IS NULL )' +
+                    'UNION ' +
+                    '(SELECT ' +
+                    '    `service_gateway`.`service_id`,  ' +
+                    '    `service`.`name`,  ' +
+                    '    `service_gateway`.`gateway_sdpid`,  ' +
+                    '    `service_gateway`.`protocol`,  ' +
+                    '    `service_gateway`.`address`,  ' +
+                    '    `service_gateway`.`port` ' +
+                    'FROM `service_gateway` ' +
+                    '    JOIN `sdpid_service` ' +
+                    '        ON `sdpid_service`.`service_id` = `service_gateway`.`service_id` ' +
+                    '    JOIN `service` ' +
+                    '        ON `sdpid_service`.`service_id` = `service`.`id` ' +
+                    '    JOIN `user` ' +
+                    '        ON `sdpid_service`.`user_id` = `user`.`id` ' +
+                    'WHERE `sdpid_service`.`sdpid` = ? AND `user`.`email` = ? )' +
                     'ORDER BY `service_id` ',
-                    [memberDetails.sdpid],
+                    [memberDetails.sdpid, memberDetails.sdpid, ""],
                     function (error, rows, fields) {
                         connection.removeListener('error', databaseErrorCallback);
                         connection.release();
