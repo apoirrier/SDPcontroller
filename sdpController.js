@@ -1300,8 +1300,11 @@ function startServer() {
                 return;
             }
 
-            console.log("Message in AccessUpdate");
-            console.log(message);
+            let user_email = "";
+            if(message.hasOwnProperty("user")) {
+                user = message.user;
+                user_email = user.email;
+            }
 
             db.getConnection(function(error,connection){
                 if(error){
@@ -1362,7 +1365,7 @@ function startServer() {
                     '        ON `sdpid_service`.`user_id` = `user`.`id` ' +
                     'WHERE `sdpid_service`.`sdpid` = ? AND `user`.`email` = ? )' +
                     'ORDER BY `service_id` ',
-                    [memberDetails.sdpid, memberDetails.sdpid, ""],
+                    [memberDetails.sdpid, memberDetails.sdpid, user_email],
                     function (error, rows, fields) {
                         connection.removeListener('error', databaseErrorCallback);
                         connection.release();
