@@ -1398,21 +1398,31 @@ function startServer() {
                             }
                         }
 
-                        if(config.debug) {
-                            console.log("Services to send: \n", services, "\n");
-                        }
-
                         dataTransmitTries++;
                         console.log("Sending access_update message to SDP ID " +
                             memberDetails.sdpid + ", attempt: " + dataTransmitTries);
 
-                        writeToSocket(socket,
-                            JSON.stringify({
-                                action: 'access_update',
-                                services
-                            }),
-                            false
-                        );
+                        let answer = {
+                            action: 'access_update',
+                            services: services
+                        };
+                        if(user_email === "") {
+                            sp.create_login_request_url(idp, {}, function(err, login_url, request_id) {
+                                if(err != null)
+                                    answer.error = err;
+                                else
+                                    answer.redirect = login_url;
+                                writeToSocket(socket,
+                                    JSON.stringify(answer),
+                                    false
+                                );
+                            });
+                        } else {
+                            writeToSocket(socket,
+                                JSON.stringify(answer),
+                                false
+                            );
+                        }
 
                     } // END QUERY CALLBACK FUNCTION
 
