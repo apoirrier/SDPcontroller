@@ -25,6 +25,7 @@ var fs     = require('fs');
 var mysql  = require("mysql");
 var credentialMaker = require('./sdpCredentialMaker');
 var prompt = require("prompt");
+var saml2 = require('saml2-js');
 
 // If the user specified the config path, get it
 if(process.argv.length > 2) {
@@ -75,6 +76,25 @@ if(config.hmacKeyLen < hmacKeyLenMin
     throw new sdpConfigException("hmacKeyLen", explanation);
 }
 
+// Preparing controller as SP
+if(config.hasOwnProperty("useIdP") && config.useIdP) {
+    var sp_options = {
+        entity_id: config.entityId,
+        private_key: fs.readFileSync(config.serverKey).toString(),
+        certificate: fs.readFileSync(config.serverCert).toString(),
+        assert_endpoint: config.callback,
+        sign_get_request: true,
+        allow_unencrypted_assertion: true
+    };
+    var sp = new saml2.ServiceProvider(sp_options);
+    
+    var idp_options = {
+        sso_login_url: `${config.idp_service}${config.idp_endpoint}`,
+        sso_logout_url: `${config.idp_service}${config.idp_endpoint}`,
+        certificates: fs.readFileSync(config.idp_cert).toString()
+    };
+    var idp = new saml2.IdentityProvider(idp_options);
+}
 
 myCredentialMaker.init(startController);
 
@@ -1279,6 +1299,9 @@ function startServer() {
                 socket.end();
                 return;
             }
+
+            console.log("Message in AccessUpdate");
+            console.log(message);
 
             db.getConnection(function(error,connection){
                 if(error){

@@ -75,4 +75,11 @@ module.exports = {
     // that require sending updates to gateways
     'databaseMonitorInterval': 3000,
     
+	// service provider options
+	'useIdP': true,
+	'entityId': 'controller',
+	'callback': 'http://callback',
+	'idp_service': 'https://idp',
+	'idp_endpoint': '/idp-endpoint',
+	'idp_cert': 'idp-cert.pem'
 };
