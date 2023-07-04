@@ -79,7 +79,9 @@ module.exports = {
 	'useIdP': true,
 	'entityId': 'controller',
 	'callback': 'http://callback',
-	'idp_service': 'https://idp',
-	'idp_endpoint': '/idp-endpoint',
-	'idp_cert': 'idp-cert.pem'
+	'idpService': 'https://idp',
+	'idpEndpoint': '/idp-endpoint',
+	'idpCert': 'idp-cert.pem',
+	'spCert': 'sp-cert.pem',
+	'spKey': 'sp-key.pem'
 };
