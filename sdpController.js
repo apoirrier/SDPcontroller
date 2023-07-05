@@ -96,6 +96,7 @@ if(config.hasOwnProperty("useIdP") && config.useIdP) {
     var idp = new saml2.IdentityProvider(idp_options);
 }
 
+
 myCredentialMaker.init(startController);
 
 function startController() {
@@ -480,6 +481,8 @@ function startServer() {
                 handleAccessUpdate(message);
             } else if (action === 'access_ack') {
                 handleAccessAck();
+            } else if (action === 'service_list_request') {
+                handleServiceList(message);
             } else if (action === 'connection_update') {
                 handleConnectionUpdate(message);
             } else if (action === 'bad_message') {
@@ -1291,21 +1294,20 @@ function startServer() {
       
     
         function handleAccessUpdate(message) {
-          if (dataTransmitTries >= config.maxDataTransmitTries) {
-                // Data transmission has failed
-                console.error("Data transmission to SDP ID " + memberDetails.sdpid +
-                  " has failed after " + (dataTransmitTries+1) + " attempts");
-                console.error("Closing connection");
-                socket.end();
-                return;
-            }
+          //TODO
+          
+        }
+      
+      
+        function handleAccessAck()  {
+            console.log("Received access data acknowledgement from SDP ID "+memberDetails.sdpid+
+                ", data successfully delivered");
+            
+            clearStateVars();
+        
+        }  // END FUNCTION handleAccessAck
 
-            let user_email = "";
-            if(message.hasOwnProperty("user")) {
-                user = message.user;
-                user_email = user.email;
-            }
-
+        function getServiceList(user_email) {
             db.getConnection(function(error,connection){
                 if(error){
                     console.error("Error connecting to database: " + error);
@@ -1313,7 +1315,7 @@ function startServer() {
                     // notify the requestor of our database troubles
                     writeToSocket(socket,
                         JSON.stringify({
-                            action: 'access_refresh_error',
+                            action: 'service_list_error',
                             data: 'Database unreachable. Try again soon.'
                         }),
                         false
@@ -1373,7 +1375,7 @@ function startServer() {
                             console.error("Access data query returned error: " + error);
                             writeToSocket(socket,
                                 JSON.stringify({
-                                    action: 'access_update_error',
+                                    action: 'service_list_error',
                                     data: 'Database error. Try again soon.'
                                 }),
                                 false
@@ -1399,19 +1401,27 @@ function startServer() {
                         }
 
                         dataTransmitTries++;
-                        console.log("Sending access_update message to SDP ID " +
+                        console.log("Sending service_list message to SDP ID " +
                             memberDetails.sdpid + ", attempt: " + dataTransmitTries);
 
                         let answer = {
-                            action: 'access_update',
+                            action: 'service_list',
                             services: services
                         };
                         if(user_email === "") {
                             sp.create_login_request_url(idp, {}, function(err, login_url, request_id) {
-                                if(err != null)
-                                    answer.error = err;
-                                else
-                                    answer.redirect = login_url;
+                                if(err != null) {
+                                    console.error("SP create login request url returned: " + err);
+                                    writeToSocket(socket,
+                                        JSON.stringify({
+                                            action: 'service_list_error',
+                                            data: 'SP create login error. Please contact an administrator.'
+                                        }),
+                                        false
+                                    );
+                                    return;
+                                }
+                                answer.redirect = login_url;
                                 writeToSocket(socket,
                                     JSON.stringify(answer),
                                     false
@@ -1423,23 +1433,45 @@ function startServer() {
                                 false
                             );
                         }
-
                     } // END QUERY CALLBACK FUNCTION
 
                 );  // END QUERY DEFINITION
           
             });  // END DATABASE CONNECTION CALLBACK
+        } // END FUNCTION getServiceList
 
-        }  // END FUNCTION handleAccessUpdate
-      
-      
-        function handleAccessAck()  {
-            console.log("Received access data acknowledgement from SDP ID "+memberDetails.sdpid+
-                ", data successfully delivered");
-            
-            clearStateVars();
-        
-        }  // END FUNCTION handleAccessAck
+        function handleServiceList(message) {
+            if(dataTransmitTries >= config.maxDataTransmitTries) {
+                // Data transmission has failed
+                console.error("Data transmission to SDP ID " + memberDetails.sdpid +
+                  " has failed after " + (dataTransmitTries+1) + " attempts");
+                console.error("Closing connection");
+                socket.end();
+                return;
+            }
+
+            if(config.hasOwnProperty("useIdP") &&
+               config.useIdP &&
+               message.hasOwnProperty("SAMLResponse")) {
+                let options = {request_body: message};
+                sp.post_assert(idp, options, function(err, saml_response) {
+                    if(err != null) {
+                        console.error("SP post assert returned: " + err);
+                        writeToSocket(socket,
+                            JSON.stringify({
+                                action: 'service_list_error',
+                                data: 'SP post assert error. Please contact an administrator.'
+                            }),
+                            false
+                        );
+                        return;
+                    }
+                    getServiceList(saml_response["user"]["attributes"]["urn:oid:1.2.840.113549.1.9.1"][0]);
+                });
+            }
+            else
+                getServiceList("");
+        } // END FUNCTION handleServiceList
     
     
         function handleConnectionUpdate(message) {
@@ -2512,5 +2544,4 @@ function sdpConfigException(configName, correctiveMessage) {
     this.name = "SdpConfigException";
     this.message = "Invalid entry for " + configName + "\n" + correctiveMessage;
 }
-
 
