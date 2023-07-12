@@ -76,7 +76,7 @@ module.exports = {
     'databaseMonitorInterval': 3000,
     
 	// service provider options
-	'useIdP': true,
+	'useIdP': false,
 	'entityId': 'controller',
 	'callback': 'http://callback',
 	'idpService': 'https://idp',
