@@ -59,7 +59,7 @@ var checkDatabaseTries = 0;
 var checkOpenConnectionsTries = 0;
 var lastDatabaseCheck = new Date();
 var lastConnectionCheck = new Date();
-
+var federatedControllers = [];
 
 // check a couple config settings
 if(config.encryptionKeyLen < encryptionKeyLenMin
@@ -189,6 +189,7 @@ function startDbPool() {
 function startServer() {
 
     cleanOpenConnectionTable();
+    getFederatedControllers();
     
     setTimeout(checkDatabaseForUpdates, 
                config.databaseMonitorInterval, 
@@ -1307,7 +1308,7 @@ function startServer() {
         
         }  // END FUNCTION handleAccessAck
 
-        function getServiceList(user_email) {
+        function getServiceList(attributes) {
             db.getConnection(function(error,connection){
                 if(error){
                     console.error("Error connecting to database: " + error);
@@ -1336,6 +1337,10 @@ function startServer() {
                 // Legacy Requests not supported (TODO)
                 // Groups also not supported for this POC (TODO)
 
+                let user_email = "";
+                if(attributes !== undefined)
+                    user_email = attributes["urn:oid:1.2.840.113549.1.9.1"][0];
+                
                 connection.query(
                     '(SELECT ' +
                     '    `service_gateway`.`service_id`,  ' +
@@ -1466,11 +1471,11 @@ function startServer() {
                         );
                         return;
                     }
-                    getServiceList(saml_response["user"]["attributes"]["urn:oid:1.2.840.113549.1.9.1"][0]);
+                    getServiceList(saml_response["user"]["attributes"]);
                 });
             }
             else
-                getServiceList("");
+                getServiceList(undefined);
         } // END FUNCTION handleServiceList
     
     
@@ -2013,6 +2018,61 @@ function cleanOpenConnectionTable() {
     
 }  // END FUNCTION cleanOpenConnectionTable
 
+function getFederatedControllers() {
+    db.getConnection(function(error,connection){
+        if(error){
+            console.error("Error connecting to database to get " + 
+                          "federated controllers: " + error);
+                          
+            throw error;
+        }
+        
+        var databaseErrorCallback = function(error) {
+            connection.removeListener('error', databaseErrorCallback);
+            connection.release();
+            console.error("Error from database connection: " + error);
+            throw error;
+        };
+    
+        connection.on('error', databaseErrorCallback);
+        
+        connection.query(
+            'SELECT protocol, address, port FROM `federated_controllers` ',
+            function (error, rows, fields) {
+                if(error) {
+                    console.error("Database query to get federated controllers " +
+                                  "returned error: " + error);
+                    connection.removeListener('error', databaseErrorCallback);
+                    connection.release();
+                    throw error;
+                }
+                
+                if(rows.length == 0) {
+                    connection.removeListener('error', databaseErrorCallback);
+                    connection.release();
+                    if(config.debug) console.log("No federated controller found.");
+                    return;
+                }
+                
+                if(config.debug) console.log("getFederatedControllers query found federated controllers.");
+                            
+                for(var idx = 0; idx < rows.length; idx++) {
+                    federatedControllers.push({
+                        "protocol": rows[idx].protocol,
+                        "address": rows[idx].address,
+                        "port": rows[idx].port,
+                    });
+                }
+                
+                connection.removeListener('error', databaseErrorCallback);
+                connection.release();
+
+            }  // END QUERY CALLBACK FUNCTION
+            
+        ); // END QUERY CALL 
+
+    });  // END db.getConnection
+} // END FUNCTION getFederatedControllers
 
 
 function checkDatabaseForUpdates(currentInterval) {
