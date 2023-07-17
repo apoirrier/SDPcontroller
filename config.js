@@ -83,5 +83,8 @@ module.exports = {
 	'idpEndpoint': '/idp-endpoint',
 	'idpCert': 'idp-cert.pem',
 	'spCert': 'sp-cert.pem',
-	'spKey': 'sp-key.pem'
+	'spKey': 'sp-key.pem',
+
+	// configuration for federation
+	'fedfolder': './path/fedfolder/'
 };

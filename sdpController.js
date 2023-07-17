@@ -26,6 +26,7 @@ var mysql  = require("mysql");
 var credentialMaker = require('./sdpCredentialMaker');
 var prompt = require("prompt");
 var saml2 = require('saml2-js');
+const { exec } = require('child_process');
 
 // If the user specified the config path, get it
 if(process.argv.length > 2) {
@@ -1308,7 +1309,7 @@ function startServer() {
         
         }  // END FUNCTION handleAccessAck
 
-        function getServiceList(attributes) {
+        function getServiceList(services, attributes) {
             db.getConnection(function(error,connection){
                 if(error){
                     console.error("Error connecting to database: " + error);
@@ -1388,7 +1389,6 @@ function startServer() {
                             return;
                         }
 
-                        var services = [];
                         var currentService = 0;
                         for(var rowIdx = 0; rowIdx < rows.length; rowIdx++) {
                             var thisRow = rows[rowIdx];
@@ -1445,6 +1445,48 @@ function startServer() {
             });  // END DATABASE CONNECTION CALLBACK
         } // END FUNCTION getServiceList
 
+        function getServiceListFederated(samlResponse, cb, services=[], i=0) {
+            if(i === federatedControllers.length) {
+                cb(services);
+                return;
+            }
+            if(config.debug)
+                console.log("Connecting to federated Controller " + federatedControllers[i].name);
+
+            var command = "fwknop --rc-file " + config.fedfolder + federatedControllers[i].name + "/.fwknoprc -n sdp_ctrl_gate";
+            if(config.debug) {
+                console.log("Sending SPA packet with the command:");
+                console.log(command);
+            }
+            exec(command, () => {
+                var options = {
+                    ca: [ fs.readFileSync(config.fedfolder + federatedControllers[i].name + "/ca.crt") ],
+                    key: fs.readFileSync(config.fedfolder + federatedControllers[i].name + "/client.key"),
+                    cert: fs.readFileSync(config.fedfolder + federatedControllers[i].name + "/client.crt"),
+                    rejectUnauthorized: true,
+                    requestCert: true,
+                    servername: federatedControllers[i].sdpid.toString(),
+                    host: federatedControllers[i].address,
+                    port: federatedControllers[i].port
+                }
+                if(config.debug) {
+                    console.log("Creating socket with the following options:");
+                    console.log(options);
+                }
+
+                var conn = tls.connect(options, function() {
+                    if(!conn.authorized) {
+                        console.err("TLS session not authorized with federated controller " + federatedControllers[i].name);
+                        console.err(conn.authorizationError);
+                        return;
+                    }
+                    writeToSocket(conn, JSON.stringify({action: "federated_service_list_request", samlResponse: samlResponse}), false);
+                });
+
+                getServiceListFederated(samlResponse, cb, services, i+1);
+            });
+        } // END FUNCTION getServiceListFederated
+
         function handleServiceList(message) {
             if(dataTransmitTries >= config.maxDataTransmitTries) {
                 // Data transmission has failed
@@ -1471,11 +1513,13 @@ function startServer() {
                         );
                         return;
                     }
-                    getServiceList(saml_response["user"]["attributes"]);
+                    getServiceListFederated(options, function (services) {
+                        getServiceList(services, saml_response["user"]["attributes"]);
+                    });
                 });
             }
             else
-                getServiceList(undefined);
+                getServiceList([], undefined);
         } // END FUNCTION handleServiceList
     
     
@@ -2037,7 +2081,7 @@ function getFederatedControllers() {
         connection.on('error', databaseErrorCallback);
         
         connection.query(
-            'SELECT protocol, address, port FROM `federated_controllers` ',
+            'SELECT * FROM `federated_controllers` ',
             function (error, rows, fields) {
                 if(error) {
                     console.error("Database query to get federated controllers " +
@@ -2058,9 +2102,11 @@ function getFederatedControllers() {
                             
                 for(var idx = 0; idx < rows.length; idx++) {
                     federatedControllers.push({
+                        "name": rows[idx].name,
                         "protocol": rows[idx].protocol,
                         "address": rows[idx].address,
                         "port": rows[idx].port,
+                        "sdpid": rows[idx].sdpid
                     });
                 }
                 
