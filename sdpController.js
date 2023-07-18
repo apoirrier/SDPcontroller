@@ -26,7 +26,7 @@ var mysql  = require("mysql");
 var credentialMaker = require('./sdpCredentialMaker');
 var prompt = require("prompt");
 var saml2 = require('saml2-js');
-const { exec } = require('child_process');
+const { execSync } = require('child_process');
 
 // If the user specified the config path, get it
 if(process.argv.length > 2) {
@@ -485,6 +485,8 @@ function startServer() {
                 handleAccessAck();
             } else if (action === 'service_list_request') {
                 handleServiceList(message);
+            } else if (action === 'federated_service_list_request') {
+                handleFederatedServiceList(message);
             } else if (action === 'connection_update') {
                 handleConnectionUpdate(message);
             } else if (action === 'bad_message') {
@@ -1445,45 +1447,129 @@ function startServer() {
             });  // END DATABASE CONNECTION CALLBACK
         } // END FUNCTION getServiceList
 
-        function getServiceListFederated(samlResponse, cb, services=[], i=0) {
-            if(i === federatedControllers.length) {
+        function getServiceListFederated(samlResponse, cb, services=[], currentFederatedController=0) {
+            if(currentFederatedController === federatedControllers.length) {
                 cb(services);
                 return;
             }
             if(config.debug)
-                console.log("Connecting to federated Controller " + federatedControllers[i].name);
+                console.log("Connecting to federated Controller " + federatedControllers[currentFederatedController].name);
 
-            var command = "fwknop --rc-file " + config.fedfolder + federatedControllers[i].name + "/.fwknoprc -n sdp_ctrl_gate";
+            var command = "fwknop --rc-file " + config.fedfolder + federatedControllers[currentFederatedController].name + "/.fwknoprc -n sdp_ctrl_gate";
             if(config.debug) {
                 console.log("Sending SPA packet with the command:");
                 console.log(command);
             }
-            exec(command, () => {
-                var options = {
-                    ca: [ fs.readFileSync(config.fedfolder + federatedControllers[i].name + "/ca.crt") ],
-                    key: fs.readFileSync(config.fedfolder + federatedControllers[i].name + "/client.key"),
-                    cert: fs.readFileSync(config.fedfolder + federatedControllers[i].name + "/client.crt"),
-                    rejectUnauthorized: true,
-                    requestCert: true,
-                    servername: federatedControllers[i].sdpid.toString(),
-                    host: federatedControllers[i].address,
-                    port: federatedControllers[i].port
-                }
-                if(config.debug) {
-                    console.log("Creating socket with the following options:");
-                    console.log(options);
-                }
+            execSync(command);
 
-                var conn = tls.connect(options, function() {
-                    if(!conn.authorized) {
-                        console.err("TLS session not authorized with federated controller " + federatedControllers[i].name);
-                        console.err(conn.authorizationError);
-                        return;
+            var options = {
+                ca: [ fs.readFileSync(config.fedfolder + federatedControllers[currentFederatedController].name + "/ca.crt") ],
+                key: fs.readFileSync(config.fedfolder + federatedControllers[currentFederatedController].name + "/client.key"),
+                cert: fs.readFileSync(config.fedfolder + federatedControllers[currentFederatedController].name + "/client.crt"),
+                rejectUnauthorized: true,
+                requestCert: true,
+                servername: federatedControllers[currentFederatedController].sdpid.toString(),
+                host: federatedControllers[currentFederatedController].address,
+                port: federatedControllers[currentFederatedController].port
+            }
+            if(config.debug) {
+                console.log("Creating socket with the following options:");
+                console.log(options);
+            }
+
+            var conn = tls.connect(options, function() {
+                if(!conn.authorized) {
+                    console.err("TLS session not authorized with federated controller " + federatedControllers[currentFederatedController].name);
+                    console.err(conn.authorizationError);
+                    return;
+                }
+            });
+
+            var expectedMessageSize = 0;
+            var totalSizeBytesReceived = 0;
+            var sizeBytesNeeded = 0;
+            var dataBytesToRead = 0;
+            var totalMessageBytesReceived = 0;
+            var sizeBuffer = Buffer.allocUnsafe(MSG_SIZE_FIELD_LEN);
+            var messageBuffer = Buffer.allocUnsafe(0);
+            conn.on('data', (data) => {
+                while(data.length) {
+                    if(expectedMessageSize == 0) {
+                        sizeBytesNeeded = MSG_SIZE_FIELD_LEN - totalSizeBytesReceived;
+                        // exceptional case, so few bytes arrived
+                        // not enough data to read expected message size
+                        if( data.length < sizeBytesNeeded ) {
+                            data.copy(sizeBuffer, totalSizeBytesReceived, 0, data.length);
+                            totalSizeBytesReceived += data.length;
+                            data = Buffer.allocUnsafe(0);
+                            return;
+                        }
+
+                        data.copy(sizeBuffer, totalSizeBytesReceived, 0, sizeBytesNeeded);
+                        totalSizeBytesReceived = MSG_SIZE_FIELD_LEN;
+                        expectedMessageSize = sizeBuffer.readUInt32BE(0);
+
+                        // time to reset the buffer
+                        messageBuffer = Buffer.allocUnsafe(0);
                     }
-                    writeToSocket(conn, JSON.stringify({action: "federated_service_list_request", samlResponse: samlResponse}), false);
-                });
 
-                getServiceListFederated(samlResponse, cb, services, i+1);
+                    // if there's more data in the received buffer besides the message size field (i.e. actual message contents)
+                    if( data.length > sizeBytesNeeded ) {
+
+                        // if there are fewer bytes than what's needed to complete the message
+                        if( (data.length - sizeBytesNeeded) < (expectedMessageSize - totalMessageBytesReceived) ){
+                            // then read from after the size field to end of the received buffer
+                            dataBytesToRead = data.length - sizeBytesNeeded;
+                        }
+                        else {
+                            dataBytesToRead = expectedMessageSize - totalMessageBytesReceived;
+                        }
+
+                        totalMessageBytesReceived += dataBytesToRead;
+                        messageBuffer = Buffer.concat([messageBuffer,
+                            data.slice(sizeBytesNeeded, sizeBytesNeeded+dataBytesToRead)],
+                            totalMessageBytesReceived);
+                    }
+
+                    // if the message is now complete, process
+                    if(totalMessageBytesReceived == expectedMessageSize) {
+                        expectedMessageSize = 0;
+                        totalSizeBytesReceived = 0;
+                        totalMessageBytesReceived = 0;
+                        
+                        if(config.debug)
+                            console.log("Received message: " + messageBuffer.toString());
+                        try {
+                            var message = JSON.parse(messageBuffer);
+                        } catch (err) {
+                            console.error("Error processing the following received data: " + messageBuffer.toString());
+                            console.error("JSON parse failed with error: " + err);
+                            return;
+                        }                            
+                        
+                        if(message.action === "credentials_good")
+                            writeToSocket(conn, JSON.stringify({action: "federated_service_list_request", SAMLResponse: samlResponse, entityId: config.entityId}), false);
+                        else if(message.action === "service_list") {
+                            for(var j=0; j < message.services.length; j++) {
+                                var current_service = message.services[j];
+                                current_service.federated = currentFederatedController;
+                                services.push(current_service);
+                            }
+                            getServiceListFederated(samlResponse, cb, services, currentFederatedController+1);
+                        }
+                        else
+                            console.error("Action unexpected");
+                    }
+
+                    data = data.slice(sizeBytesNeeded+dataBytesToRead);
+                    sizeBytesNeeded = 0;
+                    dataBytesToRead = 0;
+                }
+            });
+
+            conn.on('error', (err) => {
+                console.error("Could not open mTLS connection with federated controller: " + err);
+                conn.end();
             });
         } // END FUNCTION getServiceListFederated
 
@@ -1513,7 +1599,7 @@ function startServer() {
                         );
                         return;
                     }
-                    getServiceListFederated(options, function (services) {
+                    getServiceListFederated(message.SAMLResponse, function (services) {
                         getServiceList(services, saml_response["user"]["attributes"]);
                     });
                 });
@@ -1522,6 +1608,48 @@ function startServer() {
                 getServiceList([], undefined);
         } // END FUNCTION handleServiceList
     
+        function handleFederatedServiceList(message) {
+            if(dataTransmitTries >= config.maxDataTransmitTries) {
+                // Data transmission has failed
+                console.error("Data transmission to SDP ID " + memberDetails.sdpid +
+                  " has failed after " + (dataTransmitTries+1) + " attempts");
+                console.error("Closing connection");
+                socket.end();
+                return;
+            }
+
+            // Verifying SAML Assertion
+            var temp_sp = new saml2.ServiceProvider({
+                entity_id: message.entityId,
+                private_key: "NA",
+                certificate: "NA",
+                assert_endpoint: "NA",
+                allow_unencrypted_assertion: true
+            });
+            var temp_idp = new saml2.IdentityProvider({
+                sso_login_url: "NA",
+                sso_logout_url: "NA",
+                certificates: fs.readFileSync(config.fedfolder + memberDetails.sdpid + ".crt").toString()
+            });
+            var options = {
+                ignore_timing: true,
+                request_body: {SAMLResponse: message.SAMLResponse}
+            };
+            temp_sp.post_assert(temp_idp, options, function(err, saml_response) {
+                if(err != null) {
+                    console.error("SP post assert returned: " + err);
+                        writeToSocket(socket,
+                            JSON.stringify({
+                                action: 'federated_service_list_error',
+                                data: 'SP post assert error. Please contact an administrator.'
+                            }),
+                            false
+                        );
+                        return;
+                }
+                getServiceList([], saml_response["user"]["attributes"]);
+            });
+        } // END FUNCTION handleFederatedServiceList
     
         function handleConnectionUpdate(message) {
             console.log("Received connection update message from SDP ID "+memberDetails.sdpid);
