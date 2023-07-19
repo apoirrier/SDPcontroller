@@ -487,6 +487,8 @@ function startServer() {
                 handleServiceList(message);
             } else if (action === 'federated_service_list_request') {
                 handleFederatedServiceList(message);
+            } else if (action === 'send_spa_federated') {
+                handleFederatedSPA(message);
             } else if (action === 'connection_update') {
                 handleConnectionUpdate(message);
             } else if (action === 'bad_message') {
@@ -1450,6 +1452,20 @@ function startServer() {
             });  // END DATABASE CONNECTION CALLBACK
         } // END FUNCTION getServiceList
 
+        function updateFwknoprc(new_service, currentFederatedController) {
+            if(new_service.name == "controller")
+                return;
+
+            var filepath = config.fedfolder + federatedControllers[currentFederatedController].name + "/.fwknoprc";
+            var fwknoprc = fs.readFileSync(filepath).toString()
+            if(!fwknoprc.includes(`[${new_service.name}]`)) {
+                fwknoprc += `\n[${new_service.name}]\n`;
+                fwknoprc += `SERVICE_IDS                 ${new_service.service_id}\n`;
+                fwknoprc += `SPA_SERVER                  ${new_service.address}\n\n`;
+                fs.writeFileSync(filepath, fwknoprc);
+            }
+        } // END FUNCTION updateFwknoprc
+
         function getServiceListFederated(samlResponse, cb, services=[], currentFederatedController=0) {
             if(currentFederatedController === federatedControllers.length) {
                 cb(services);
@@ -1556,6 +1572,7 @@ function startServer() {
                             for(var j=0; j < message.services.length; j++) {
                                 var current_service = message.services[j];
                                 current_service.federated = currentFederatedController;
+                                updateFwknoprc(current_service, currentFederatedController);
                                 services.push(current_service);
                             }
                             getServiceListFederated(samlResponse, cb, services, currentFederatedController+1);
@@ -1653,6 +1670,34 @@ function startServer() {
                 getServiceList([], saml_response["user"]["attributes"]);
             });
         } // END FUNCTION handleFederatedServiceList
+
+        function handleFederatedSPA(message) {
+            var command = "fwknop --rc-file " + config.fedfolder + federatedControllers[parseInt(message.federated)].name + "/.fwknoprc -n " + message.name + " -a " + message.ip;
+            if(config.debug) {
+                console.log("Sending SPA packet with the command:");
+                console.log(command);
+            }
+            try {
+                execSync(command);
+                writeToSocket(socket, 
+                    JSON.stringify({
+                        action: 'federated_spa_sent'
+                    }), 
+                    false
+                );
+            } catch (err) {
+                console.error("Error sending SPA with command:");
+                console.error(command);
+                console.error(err);
+                writeToSocket(socket, 
+                    JSON.stringify({
+                        action: 'federated_spa_error',
+                        data: 'Could not send SPA to gateway.'
+                    }), 
+                    false
+                );
+            }
+        } // END FUNCTION handleFederatedSPA
     
         function handleConnectionUpdate(message) {
             console.log("Received connection update message from SDP ID "+memberDetails.sdpid);
