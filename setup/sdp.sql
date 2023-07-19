@@ -381,7 +381,7 @@ CREATE TABLE IF NOT EXISTS `sdpid_service` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `sdpid` int(11) NOT NULL,
   `service_id` int(11) NOT NULL,
-  `user_id` int(11) DEFAULT NULL,
+  `cond` varchar(1024) COLLATE utf8_bin DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `service_id` (`service_id`),
   KEY `sdpid` (`sdpid`)

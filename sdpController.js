@@ -1311,6 +1311,27 @@ function startServer() {
         
         }  // END FUNCTION handleAccessAck
 
+        function checkCondition(conditions, attributes) {
+            if(conditions === "NULL")
+                return true;
+            if(attributes === undefined)
+                return false;
+            if(config.debug) {
+                console.log("Trying to match:");
+                console.log(conditions);
+                console.log(attributes);
+            }
+            var allConditionsValid = true;
+            conditions.split(";").forEach((condition) => {
+                var key = condition.split("=")[0];
+                var val = condition.split("=")[1];
+                if(!attributes.hasOwnProperty(key) || !attributes[key].includes(val)) {
+                    allConditionsValid = false;
+                }
+            });
+            return allConditionsValid;
+        }
+
         function getServiceList(services, attributes) {
             db.getConnection(function(error,connection){
                 if(error){
@@ -1339,43 +1360,24 @@ function startServer() {
 
                 // Legacy Requests not supported (TODO)
                 // Groups also not supported for this POC (TODO)
-
-                let user_email = "";
-                if(attributes !== undefined)
-                    user_email = attributes["urn:oid:1.2.840.113549.1.9.1"][0];
                 
                 connection.query(
-                    '(SELECT ' +
+                    'SELECT ' +
                     '    `service_gateway`.`service_id`,  ' +
                     '    `service`.`name`,  ' +
                     '    `service_gateway`.`gateway_sdpid`,  ' +
                     '    `service_gateway`.`protocol`,  ' +
                     '    `service_gateway`.`address`,  ' +
-                    '    `service_gateway`.`port` ' +
+                    '    `service_gateway`.`port`, ' +
+                    '    `sdpid_service`.`cond` ' +
                     'FROM `service_gateway` ' +
                     '    JOIN `sdpid_service` ' +
                     '        ON `sdpid_service`.`service_id` = `service_gateway`.`service_id` ' +
                     '    JOIN `service` ' +
                     '        ON `sdpid_service`.`service_id` = `service`.`id` ' +
-                    'WHERE `sdpid_service`.`sdpid` = ? AND `sdpid_service`.`user_id` IS NULL )' +
-                    'UNION ' +
-                    '(SELECT ' +
-                    '    `service_gateway`.`service_id`,  ' +
-                    '    `service`.`name`,  ' +
-                    '    `service_gateway`.`gateway_sdpid`,  ' +
-                    '    `service_gateway`.`protocol`,  ' +
-                    '    `service_gateway`.`address`,  ' +
-                    '    `service_gateway`.`port` ' +
-                    'FROM `service_gateway` ' +
-                    '    JOIN `sdpid_service` ' +
-                    '        ON `sdpid_service`.`service_id` = `service_gateway`.`service_id` ' +
-                    '    JOIN `service` ' +
-                    '        ON `sdpid_service`.`service_id` = `service`.`id` ' +
-                    '    JOIN `user` ' +
-                    '        ON `sdpid_service`.`user_id` = `user`.`id` ' +
-                    'WHERE `sdpid_service`.`sdpid` = ? AND `user`.`email` = ? )' +
+                    'WHERE `sdpid_service`.`sdpid` = ? ' +
                     'ORDER BY `service_id` ',
-                    [memberDetails.sdpid, memberDetails.sdpid, user_email],
+                    [memberDetails.sdpid],
                     function (error, rows, fields) {
                         connection.removeListener('error', databaseErrorCallback);
                         connection.release();
@@ -1396,14 +1398,15 @@ function startServer() {
                             var thisRow = rows[rowIdx];
                             if(thisRow.service_id != currentService) {
                                 currentService = thisRow.service_id;
-                                services.push({
-                                    service_id: thisRow.service_id,
-                                    name: thisRow.name,
-                                    gateway_sdpid: thisRow.gateway_sdpid,
-                                    protocol: thisRow.protocol,
-                                    address: thisRow.address,
-                                    port: thisRow.port
-                                });
+                                if(checkCondition(thisRow.cond, attributes))
+                                    services.push({
+                                        service_id: thisRow.service_id,
+                                        name: thisRow.name,
+                                        gateway_sdpid: thisRow.gateway_sdpid,
+                                        protocol: thisRow.protocol,
+                                        address: thisRow.address,
+                                        port: thisRow.port
+                                    });
                             }
                         }
 
@@ -1415,7 +1418,7 @@ function startServer() {
                             action: 'service_list',
                             services: services
                         };
-                        if(user_email === "") {
+                        if(attributes === undefined) {
                             sp.create_login_request_url(idp, {}, function(err, login_url, request_id) {
                                 if(err != null) {
                                     console.error("SP create login request url returned: " + err);
