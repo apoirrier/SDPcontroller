@@ -489,6 +489,8 @@ function startServer() {
                 handleFederatedServiceList(message);
             } else if (action === 'send_spa_federated') {
                 handleFederatedSPA(message);
+            } else if (action === 'remote_attestation') {
+                handleRemoteAttestation(message);
             } else if (action === 'connection_update') {
                 handleConnectionUpdate(message);
             } else if (action === 'bad_message') {
@@ -1698,6 +1700,70 @@ function startServer() {
                 );
             }
         } // END FUNCTION handleFederatedSPA
+
+        function handleRemoteAttestation(message) {
+            if(!message.attestation_result) {
+                console.log("Attestation result is false");
+                db.getConnection(function(error,connection){
+                    if(error){
+                        console.error("Error connecting to database: " + error);
+    
+                        // notify the requestor of our database troubles
+                        writeToSocket(socket,
+                            JSON.stringify({
+                                action: 'remote_attestation_error',
+                                data: 'Database unreachable. Try again soon.'
+                            }),
+                            false
+                        );
+    
+                        return;
+                    }
+    
+                    var databaseErrorCallback = function(error) {
+                        connection.removeListener('error', databaseErrorCallback);
+                        connection.release();
+                        console.error("Error from database connection: " + error);
+                        return;
+                    };
+    
+                    connection.on('error', databaseErrorCallback);
+                        
+                    connection.query(
+                        'UPDATE `sdpid` SET ' +
+                        '`cred_update_due` = ? ' +
+                        'WHERE `sdpid` = ?; ' +
+                        'DELETE FROM `sdpid_service` ' +
+                        'WHERE `sdpid` = ? AND `service_id` != 1',
+                        [new Date(), message.sdpid, message.sdpid],
+                        function (error, rows, fields) {
+                            connection.removeListener('error', databaseErrorCallback);
+                            connection.release();
+                            if(error) {
+                                console.error("Access data query returned error: " + error);
+                                writeToSocket(socket,
+                                    JSON.stringify({
+                                        action: 'remote_attestation_error',
+                                        data: 'Database error. Try again soon.'
+                                    }),
+                                    false
+                                );
+                            }
+
+                        } // END QUERY CALLBACK FUNCTION
+    
+                    );  // END QUERY DEFINITION
+              
+                });  // END DATABASE CONNECTION CALLBACK
+
+            } // END IF attestation_result
+
+            dataTransmitTries++;
+            writeToSocket(socket,
+                JSON.stringify({action: "remote_attestation_ack"}),
+                false);
+
+        } // END FUNCTION handleRemoteAttestation
     
         function handleConnectionUpdate(message) {
             console.log("Received connection update message from SDP ID "+memberDetails.sdpid);
