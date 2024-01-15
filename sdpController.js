@@ -1397,12 +1397,12 @@ function startServer() {
                             return;
                         }
 
-                        var currentService = 0;
+                        var lastAddedService = 0;
                         for(var rowIdx = 0; rowIdx < rows.length; rowIdx++) {
                             var thisRow = rows[rowIdx];
-                            if(thisRow.service_id != currentService) {
-                                currentService = thisRow.service_id;
-                                if(checkCondition(thisRow.cond, attributes))
+                            if(thisRow.service_id != lastAddedService) {
+                                if(checkCondition(thisRow.cond, attributes)) {
+                                    lastAddedService = thisRow.service_id;
                                     services.push({
                                         service_id: thisRow.service_id,
                                         name: thisRow.name,
@@ -1411,6 +1411,7 @@ function startServer() {
                                         address: thisRow.address,
                                         port: thisRow.port
                                     });
+                                }
                             }
                         }
 
