@@ -21,6 +21,7 @@
 
 // Load the libraries
 var tls    = require('tls');
+var https  = require('https');
 var fs     = require('fs');
 var mysql  = require("mysql");
 var credentialMaker = require('./sdpCredentialMaker');
@@ -1315,28 +1316,60 @@ function startServer() {
         
         }  // END FUNCTION handleAccessAck
 
-        function checkCondition(conditions, attributes) {
-            if(conditions === "NULL")
-                return true;
-            if(attributes === undefined)
-                return false;
-            if(config.debug) {
-                console.log("Trying to match:");
-                console.log(conditions);
-                console.log(attributes);
-            }
-            var allConditionsValid = true;
-            conditions.split(";").forEach((condition) => {
-                var key = condition.split("=")[0];
-                var val = condition.split("=")[1];
-                if(!attributes.hasOwnProperty(key) || !attributes[key].includes(val)) {
-                    allConditionsValid = false;
-                }
-            });
-            return allConditionsValid;
-        }
+        function getServicesOPA(attributes, callback) {
+            var postData = JSON.stringify(attributes);
 
-        function getServiceList(services, attributes) {
+            var options = {
+                ca: [ fs.readFileSync(config.caCert) ],
+                port: config.opaPort,
+                hostname: config.opaHostname,
+                path: '/',
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': postData.length
+                }
+            };
+
+            var opaConnectError = function(error) {
+                console.error("Error connecting to OPA: " + error);
+
+                // notify the requestor of our database troubles
+                writeToSocket(socket,
+                    JSON.stringify({
+                        action: 'service_list_error',
+                        data: 'OPA unreachable. Try again soon.'
+                    }),
+                    false
+                );
+            };
+
+            var req = https.request(options, (res) => {
+                if(res.statusCode != 200) {
+                    opaConnectError("Status code " + res.statusCode);
+                    return;
+                }
+                res.on('data', (d) => {
+                    try {
+                        var authorizedServices = JSON.parse(d);
+                        console.log("Connected to OPA. List of authorized services: " + d);
+                        callback(authorizedServices);
+                    } catch (err) {
+                        opaConnectError(err);
+                    }
+                });
+            });
+            
+            req.on('error', opaConnectError);
+
+            if(config.debug)
+                console.log("Sending query to OPA with the following content:\n" + postData);
+
+            req.write(postData);
+            req.end();
+        } // END FUNCTION getServicesOPA
+
+        function addServicesDB(authorizedServices, callback) {
             db.getConnection(function(error,connection){
                 if(error){
                     console.error("Error connecting to database: " + error);
@@ -1349,7 +1382,6 @@ function startServer() {
                         }),
                         false
                     );
-
                     return;
                 }
 
@@ -1357,14 +1389,58 @@ function startServer() {
                     connection.removeListener('error', databaseErrorCallback);
                     connection.release();
                     console.error("Error from database connection: " + error);
-                    return;
                 };
-
                 connection.on('error', databaseErrorCallback);
 
-                // Legacy Requests not supported (TODO)
-                // Groups also not supported for this POC (TODO)
-                
+                connection.query(
+                    'INSERT IGNORE INTO `sdpid_service` ' +
+                    '(`sdpid`, `service_id`) ' +
+                    '(SELECT ?, `service`.`id` FROM `service` ' +
+                    'WHERE `service`.`name` IN (?));',
+                    [memberDetails.sdpid, authorizedServices],
+                    function (error, rows, fields) {
+                        connection.removeListener('error', databaseErrorCallback);
+                        connection.release();
+                        if(error) {
+                            console.error("Access data query returned error: " + error);
+                            writeToSocket(socket,
+                                JSON.stringify({
+                                    action: 'service_list_error',
+                                    data: 'Database error. Try again soon.'
+                                }),
+                                false
+                            );
+                            return;
+                        }
+                        callback();
+                    } // END QUERY CALLBACK FUNCTION
+                );  // END QUERY DEFINITION
+            });  // END DATABASE CONNECTION CALLBACK
+        } // END FUNCTION addServicesDB
+
+        function getServicesDB(services, callback) {
+            db.getConnection(function(error,connection){
+                if(error){
+                    console.error("Error connecting to database: " + error);
+
+                    // notify the requestor of our database troubles
+                    writeToSocket(socket,
+                        JSON.stringify({
+                            action: 'service_list_error',
+                            data: 'Database unreachable. Try again soon.'
+                        }),
+                        false
+                    );
+                    return;
+                }
+
+                var databaseErrorCallback = function(error) {
+                    connection.removeListener('error', databaseErrorCallback);
+                    connection.release();
+                    console.error("Error from database connection: " + error);
+                };
+                connection.on('error', databaseErrorCallback);
+
                 connection.query(
                     'SELECT ' +
                     '    `service_gateway`.`service_id`,  ' +
@@ -1372,8 +1448,7 @@ function startServer() {
                     '    `service_gateway`.`gateway_sdpid`,  ' +
                     '    `service_gateway`.`protocol`,  ' +
                     '    `service_gateway`.`address`,  ' +
-                    '    `service_gateway`.`port`, ' +
-                    '    `sdpid_service`.`cond` ' +
+                    '    `service_gateway`.`port` ' +
                     'FROM `service_gateway` ' +
                     '    JOIN `sdpid_service` ' +
                     '        ON `sdpid_service`.`service_id` = `service_gateway`.`service_id` ' +
@@ -1401,59 +1476,77 @@ function startServer() {
                         for(var rowIdx = 0; rowIdx < rows.length; rowIdx++) {
                             var thisRow = rows[rowIdx];
                             if(thisRow.service_id != lastAddedService) {
-                                if(checkCondition(thisRow.cond, attributes)) {
-                                    lastAddedService = thisRow.service_id;
-                                    services.push({
-                                        service_id: thisRow.service_id,
-                                        name: thisRow.name,
-                                        gateway_sdpid: thisRow.gateway_sdpid,
-                                        protocol: thisRow.protocol,
-                                        address: thisRow.address,
-                                        port: thisRow.port
-                                    });
-                                }
+                                lastAddedService = thisRow.service_id;
+                                services.push({
+                                    service_id: thisRow.service_id,
+                                    name: thisRow.name,
+                                    gateway_sdpid: thisRow.gateway_sdpid,
+                                    protocol: thisRow.protocol,
+                                    address: thisRow.address,
+                                    port: thisRow.port
+                                });
                             }
                         }
 
-                        dataTransmitTries++;
-                        console.log("Sending service_list message to SDP ID " +
-                            memberDetails.sdpid + ", attempt: " + dataTransmitTries);
-
-                        let answer = {
-                            action: 'service_list',
-                            services: services
-                        };
-                        if(attributes === undefined) {
-                            sp.create_login_request_url(idp, {}, function(err, login_url, request_id) {
-                                if(err != null) {
-                                    console.error("SP create login request url returned: " + err);
-                                    writeToSocket(socket,
-                                        JSON.stringify({
-                                            action: 'service_list_error',
-                                            data: 'SP create login error. Please contact an administrator.'
-                                        }),
-                                        false
-                                    );
-                                    return;
-                                }
-                                answer.redirect = login_url;
-                                writeToSocket(socket,
-                                    JSON.stringify(answer),
-                                    false
-                                );
-                            });
-                        } else {
-                            writeToSocket(socket,
-                                JSON.stringify(answer),
-                                false
-                            );
-                        }
+                        callback();
                     } // END QUERY CALLBACK FUNCTION
 
                 );  // END QUERY DEFINITION
           
             });  // END DATABASE CONNECTION CALLBACK
+        } // END FUNCTION getServicesDB
+
+        function getServiceList(services, attributes) {
+            if(attributes !== undefined) {
+                getServicesOPA(attributes, (authorizedServices) => {
+                    addServicesDB(authorizedServices, () => {
+                        getServicesDB(services, () => {
+                            sendServiceList(services, false);
+                        });
+                    });
+                });
+            } else {
+                getServicesDB(services, () => {
+                    sendServiceList(services, true);
+                });
+            }
         } // END FUNCTION getServiceList
+
+        function sendServiceList(services, require_login) {
+            dataTransmitTries++;
+            console.log("Sending service_list message to SDP ID " +
+                memberDetails.sdpid + ", attempt: " + dataTransmitTries);
+
+            let answer = {
+                action: 'service_list',
+                services: services
+            };
+            if(require_login) {
+                sp.create_login_request_url(idp, {}, function(err, login_url, request_id) {
+                    if(err != null) {
+                        console.error("SP create login request url returned: " + err);
+                        writeToSocket(socket,
+                            JSON.stringify({
+                                action: 'service_list_error',
+                                data: 'SP create login error. Please contact an administrator.'
+                            }),
+                            false
+                        );
+                        return;
+                    }
+                    answer.redirect = login_url;
+                    writeToSocket(socket,
+                        JSON.stringify(answer),
+                        false
+                    );
+                });
+            } else {
+                writeToSocket(socket,
+                    JSON.stringify(answer),
+                    false
+                );
+            }
+        } // END FUNCTION sendServiceList
 
         function updateFwknoprc(new_service, currentFederatedController) {
             if(new_service.name == "controller")
@@ -1623,7 +1716,7 @@ function startServer() {
                         return;
                     }
                     getServiceListFederated(message.SAMLResponse, function (services) {
-                        getServiceList(services, saml_response["user"]["attributes"]);
+                        getServiceList(services, saml_response["user"]);
                     });
                 });
             }

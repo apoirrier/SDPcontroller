@@ -85,6 +85,11 @@ module.exports = {
 	'spCert': 'sp-cert.pem',
 	'spKey': 'sp-key.pem',
 
+	// ABAC options
+	'opaPort': 8181,
+	'opaHostname': 'opa-hostname',
+
+
 	// configuration for federation
 	'fedfolder': './path/fedfolder/'
 };

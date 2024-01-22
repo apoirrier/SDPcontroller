@@ -381,11 +381,11 @@ CREATE TABLE IF NOT EXISTS `sdpid_service` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `sdpid` int(11) NOT NULL,
   `service_id` int(11) NOT NULL,
-  `cond` varchar(1024) COLLATE utf8_bin DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `service_id` (`service_id`),
   KEY `sdpid` (`sdpid`)
 ) ENGINE=InnoDB  DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=11 ;
+ALTER TABLE sdpid_service ADD UNIQUE KEY `sdpid_service` (`sdpid`, `service_id`);
 
 --
 -- RELATIONS FOR TABLE `sdpid_service`:
