@@ -1763,7 +1763,7 @@ function startServer() {
                         );
                         return;
                 }
-                getServiceList([], saml_response["user"]["attributes"]);
+                getServiceList([], saml_response["user"]);
             });
         } // END FUNCTION handleFederatedServiceList
 
