@@ -62,6 +62,8 @@ var checkOpenConnectionsTries = 0;
 var lastDatabaseCheck = new Date();
 var lastConnectionCheck = new Date();
 var federatedControllers = [];
+var fleetToken = "";
+var fleetQueryId = "";
 
 // check a couple config settings
 if(config.encryptionKeyLen < encryptionKeyLenMin
@@ -98,6 +100,62 @@ if(config.hasOwnProperty("useIdP") && config.useIdP) {
     var idp = new saml2.IdentityProvider(idp_options);
 }
 
+// Getting information from Fleet
+if(config.hasOwnProperty("useFleet") && config.useFleet) {
+    fleetToken = fs.readFileSync(config.fleetTokenFile).toString().trim();
+    if(config.debug)
+        console.log("Fleet token: " + fleetToken);
+    function fleetQuery(path, method, data, cb) {
+        var postData = JSON.stringify(data);
+
+        var options = {
+            ca: [ fs.readFileSync(config.caCert) ],
+            port: config.fleetPort,
+            hostname: config.fleetHostname,
+            path: path,
+            method: method,
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + fleetToken
+            }
+        };
+
+        var fleetConnectError = function(error) {
+            console.error("Error connecting to Fleet: " + error);
+        };
+
+        var req = https.request(options, (res) => {
+            if(res.statusCode != 200) {
+                fleetConnectError("Status code " + res.statusCode);
+                return;
+            }
+            res.on('data', (d) => {
+                try {
+                    var answer = JSON.parse(d);
+                    if(config.debug)
+                        console.log("Answer from Fleet: " + d);
+                    cb(answer);
+                } catch (err) {
+                    fleetConnectError(err);
+                }
+            });
+        });
+            
+        req.on('error', fleetConnectError);
+
+        if(config.debug)
+            console.log("Sending " + method + " query to Fleet at: " + path);
+
+        if(method == "POST")
+            req.write(postData);
+        req.end();
+    };
+    fleetQuery("/api/v1/fleet/queries?query=" + config.fleetQuery, 'GET', {}, (answer) => {
+        fleetQueryId = answer["queries"][0]["id"];
+        if(config.debug)
+            console.log("Found Query ID: " + fleetQueryId);
+    });
+}
 
 myCredentialMaker.init(startController);
 
@@ -1316,6 +1374,16 @@ function startServer() {
         
         }  // END FUNCTION handleAccessAck
 
+        function getDeviceAttributes(attributes, callback) {
+            fleetQuery("/api/v1/fleet/hosts/identifier/" + memberDetails.sdpid, 'GET', {}, (host_answer) => {
+                var host_id = host_answer["host"]["id"];
+                fleetQuery("/api/v1/fleet/queries/" + fleetQueryId + "/run", 'POST', {"host_ids": [host_id]}, (answer) => {
+                    attributes["device"] = answer["results"]["rows"][0];
+                    callback(attributes);
+                });
+            });
+        } // END FUNCTION getDeviceAttributes
+
         function getServicesOPA(attributes, callback) {
             var postData = JSON.stringify(attributes);
 
@@ -1498,10 +1566,12 @@ function startServer() {
 
         function getServiceList(services, attributes) {
             if(attributes !== undefined) {
-                getServicesOPA(attributes, (authorizedServices) => {
-                    addServicesDB(authorizedServices, () => {
-                        getServicesDB(services, () => {
-                            sendServiceList(services, false);
+                getDeviceAttributes(attributes, (all_attributes) => {
+                    getServicesOPA(all_attributes, (authorizedServices) => {
+                        addServicesDB(authorizedServices, () => {
+                            getServicesDB(services, () => {
+                                sendServiceList(services, false);
+                            });
                         });
                     });
                 });

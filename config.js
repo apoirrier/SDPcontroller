@@ -89,6 +89,13 @@ module.exports = {
 	'opaPort': 8181,
 	'opaHostname': 'opa-hostname',
 
+	// Fleet options
+	'useFleet': false,
+	'fleetPort': 8080,
+	'fleetHostname': 'fleet-hostname',
+	'fleetTokenFile': './path/token',
+	'fleetQuery': 'getDeviceInfo',
+
 
 	// configuration for federation
 	'fedfolder': './path/fedfolder/'
