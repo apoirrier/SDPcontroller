@@ -1379,7 +1379,11 @@ function startServer() {
         
         }  // END FUNCTION handleAccessAck
 
-        function getDeviceAttributes(attributes, callback) {
+        function getDeviceAttributes(attributes, federatedQuery, callback) {
+            if(federatedQuery) {
+                callback(attributes);
+                return;
+            }
             fleetQuery("/api/v1/fleet/hosts/identifier/" + memberDetails.sdpid, 'GET', {}, (host_answer) => {
                 var host_id = host_answer["host"]["id"];
                 fleetQuery("/api/v1/fleet/queries/" + fleetQueryId + "/run", 'POST', {"host_ids": [host_id]}, (answer) => {
@@ -1573,9 +1577,9 @@ function startServer() {
             });  // END DATABASE CONNECTION CALLBACK
         } // END FUNCTION getServicesDB
 
-        function getServiceList(services, attributes) {
+        function getServiceList(services, attributes, federatedQuery) {
             if(attributes !== undefined) {
-                getDeviceAttributes(attributes, (all_attributes) => {
+                getDeviceAttributes(attributes, federatedQuery, (all_attributes) => {
                     getServicesOPA(all_attributes, (authorizedServices) => {
                         addServicesDB(authorizedServices, () => {
                             getServicesDB(services, () => {
@@ -1795,12 +1799,12 @@ function startServer() {
                         return;
                     }
                     getServiceListFederated(message.SAMLResponse, function (services) {
-                        getServiceList(services, saml_response["user"]);
+                        getServiceList(services, saml_response["user"], false);
                     });
                 });
             }
             else
-                getServiceList([], undefined);
+                getServiceList([], undefined, false);
         } // END FUNCTION handleServiceList
     
         function handleFederatedServiceList(message) {
@@ -1842,7 +1846,7 @@ function startServer() {
                         );
                         return;
                 }
-                getServiceList([], saml_response["user"]);
+                getServiceList([], saml_response["user"], true);
             });
         } // END FUNCTION handleFederatedServiceList
 
