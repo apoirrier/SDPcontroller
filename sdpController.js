@@ -103,10 +103,9 @@ if(config.hasOwnProperty("useIdP") && config.useIdP) {
 // Getting information from Fleet
 if(config.hasOwnProperty("useFleet") && config.useFleet) {
     fleetToken = fs.readFileSync(config.fleetTokenFile).toString().trim();
-    if(config.debug)
-        console.log("Fleet token: " + fleetToken);
     function fleetQuery(path, method, data, cb) {
         var postData = JSON.stringify(data);
+        var answer = "";
 
         var options = {
             ca: [ fs.readFileSync(config.caCert) ],
@@ -129,25 +128,31 @@ if(config.hasOwnProperty("useFleet") && config.useFleet) {
                 fleetConnectError("Status code " + res.statusCode);
                 return;
             }
-            res.on('data', (d) => {
+            res.on('data', (chunk) => {
+                answer += chunk;
+            });
+            res.on('end', () => {
                 try {
-                    var answer = JSON.parse(d);
+                    var answer_json = JSON.parse(answer);
                     if(config.debug)
-                        console.log("Answer from Fleet: " + d);
-                    cb(answer);
+                        console.log("Answer from Fleet: " + answer);
+                    cb(answer_json);
                 } catch (err) {
                     fleetConnectError(err);
                 }
             });
         });
-            
+
         req.on('error', fleetConnectError);
 
         if(config.debug)
             console.log("Sending " + method + " query to Fleet at: " + path);
 
-        if(method == "POST")
+        if(method == "POST") {
+            if(config.debug)
+                console.log("Sending " + postData);
             req.write(postData);
+        }
         req.end();
     };
     fleetQuery("/api/v1/fleet/queries?query=" + config.fleetQuery, 'GET', {}, (answer) => {
@@ -1378,7 +1383,7 @@ function startServer() {
             fleetQuery("/api/v1/fleet/hosts/identifier/" + memberDetails.sdpid, 'GET', {}, (host_answer) => {
                 var host_id = host_answer["host"]["id"];
                 fleetQuery("/api/v1/fleet/queries/" + fleetQueryId + "/run", 'POST', {"host_ids": [host_id]}, (answer) => {
-                    attributes["device"] = answer["results"]["rows"][0];
+                    attributes["device"] = answer["results"][0]["rows"][0];
                     callback(attributes);
                 });
             });
@@ -1386,6 +1391,7 @@ function startServer() {
 
         function getServicesOPA(attributes, callback) {
             var postData = JSON.stringify(attributes);
+            var answer = "";
 
             var options = {
                 ca: [ fs.readFileSync(config.caCert) ],
@@ -1417,10 +1423,13 @@ function startServer() {
                     opaConnectError("Status code " + res.statusCode);
                     return;
                 }
-                res.on('data', (d) => {
+                res.on('data', (chunk) => {
+                    answer += chunk;
+                });
+                res.on('end', () => {
                     try {
-                        var authorizedServices = JSON.parse(d);
-                        console.log("Connected to OPA. List of authorized services: " + d);
+                        var authorizedServices = JSON.parse(answer);
+                        console.log("Connected to OPA. List of authorized services: " + answer);
                         callback(authorizedServices);
                     } catch (err) {
                         opaConnectError(err);
