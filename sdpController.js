@@ -1745,8 +1745,18 @@ function startServer() {
                             return;
                         }                            
                         
-                        if(message.action === "credentials_good")
-                            writeToSocket(conn, JSON.stringify({action: "federated_service_list_request", SAMLResponse: samlResponse, entityId: config.entityId}), false);
+                        if(message.action === "credentials_good") {
+                            getDeviceAttributes({}, false, (device_attributes) => {
+                                console.log("getDeviceAttributes returned:" + device_attributes);
+                                var answer = {
+                                    action: "federated_service_list_request",
+                                    SAMLResponse: samlResponse,
+                                    deviceAttributes: device_attributes,
+                                    entityId: config.entityId
+                                }
+                                writeToSocket(conn, JSON.stringify(answer), false);
+                            })
+                        }
                         else if(message.action === "service_list") {
                             for(var j=0; j < message.services.length; j++) {
                                 var current_service = message.services[j];
@@ -1846,7 +1856,9 @@ function startServer() {
                         );
                         return;
                 }
-                getServiceList([], saml_response["user"], true);
+                var attributes = saml_response["user"];
+                attributes["device"] = message.deviceAttributes["device"];
+                getServiceList([], attributes, true);
             });
         } // END FUNCTION handleFederatedServiceList
 
