@@ -96,6 +96,10 @@ module.exports = {
 	'fleetTokenFile': './path/token',
 	'fleetQuery': 'getDeviceInfo',
 
+	// ABE options
+	'useABE': false,
+	'abePort': 5000,
+	'abeHostname': 'abe-engine',
 
 	// configuration for federation
 	'fedfolder': './path/fedfolder/'

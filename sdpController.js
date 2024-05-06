@@ -21,6 +21,7 @@
 
 // Load the libraries
 var tls    = require('tls');
+var http   = require('http');
 var https  = require('https');
 var fs     = require('fs');
 var mysql  = require("mysql");
@@ -1577,33 +1578,79 @@ function startServer() {
             });  // END DATABASE CONNECTION CALLBACK
         } // END FUNCTION getServicesDB
 
+        function getABEKey(attributes, callback) {
+            if(config.hasOwnProperty("useABE") && config.useABE) {
+                var postData = JSON.stringify({
+                    "attributes": attributes["attributes"]
+                });
+                var answer = "";
+
+                var options = {
+                    port: config.abePort,
+                    hostname: config.abeHostname,
+                    path: "/gen_key",
+                    method: "POST",
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                };
+
+                var ABEConnectError = function(error) {
+                    console.error("Error connecting to ABE: " + error);
+                };
+
+                var req = http.request(options, (res) => {
+                    if(res.statusCode != 200) {
+                        ABEConnectError("Status code " + res.statusCode);
+                        return;
+                    }
+                    res.on('data', (chunk) => {
+                        answer += chunk;
+                    });
+                    res.on('end', () => {
+                        callback(answer);
+                    });
+                });
+
+                req.on('error', ABEConnectError);
+
+                req.write(postData);
+                req.end();
+            } else
+                callback(undefined);
+        } // END FUNCTION getABEKey
+
         function getServiceList(services, attributes, federatedQuery) {
             if(attributes !== undefined) {
                 getDeviceAttributes(attributes, federatedQuery, (all_attributes) => {
                     getServicesOPA(all_attributes, (authorizedServices) => {
                         addServicesDB(authorizedServices, () => {
                             getServicesDB(services, () => {
-                                sendServiceList(services, false);
+                                getABEKey(attributes, (abeKey) => {
+                                    sendServiceList(services, abeKey, false);
+                                });
                             });
                         });
                     });
                 });
             } else {
                 getServicesDB(services, () => {
-                    sendServiceList(services, true);
+                    sendServiceList(services, undefined, true);
                 });
             }
         } // END FUNCTION getServiceList
 
-        function sendServiceList(services, require_login) {
+        function sendServiceList(services, abeKey, require_login) {
             dataTransmitTries++;
             console.log("Sending service_list message to SDP ID " +
                 memberDetails.sdpid + ", attempt: " + dataTransmitTries);
 
             let answer = {
                 action: 'service_list',
-                services: services
+                services: services,
             };
+            if(abeKey !== undefined)
+                answer.abeKey = abeKey;
             if(require_login) {
                 sp.create_login_request_url(idp, {}, function(err, login_url, request_id) {
                     if(err != null) {
